@@ -1,0 +1,103 @@
+#!/usr/bin/perl
+
+# Copyright (C) 2016  Lukáš Ondráček <ondracek.lukas@gmail.com>, to be used under GNU GPLv3
+
+if (not @ARGV) { print '
+Usage: bylines SCRIPT_FILE [PARAMETERS ...]
+
+SCRIPT_FILE will be executed using its interpreter according to the hashbang line.
+The interpreter will get the file BY LINES through a pipe;
+you can modify part of the file which has not been read yet;
+at the end of the file the interpreter will not receive EOF,
+instead it will wait for new lines to be appended to the file;
+you have to terminate the interpreter explicitly using its appropriate command (exit, quit, ...).
+
+If the interpreter reads only those lines it currently needs (like bash does),
+then usually one line after the being executed line stays in the pipe
+while the others can be modified.
+
+The interpreter is spawned using this script (as its only child), 
+so if you need to signal it, send the signal directly to the interpreter.
+If this script is terminated using a signal, interpreter receives EOF.
+
+Warning:
+This script uses active/exponential waiting,
+so you can notice slower execution or higher cpu consumption
+in comparison to direct execution of the script.
+
+Copyright (C) 2016  Lukáš Ondráček <ondracek.lukas@gmail.com>, to be used under GNU GPLv3.
+'; exit; }
+
+
+
+use v5.10;
+use Time::HiRes qw(sleep);
+use POSIX qw(WEXITSTATUS);
+
+
+my $file=shift;
+my @args=@ARGV;
+@ARGV=();
+
+die "File cannot be executed (wrong path or not executable)" if not -x $file;
+
+$^F=10;
+pipe my $pipeOut, my $pipeIn;
+$pipeIn->autoflush(1);
+my $pid=fork;
+
+if ($pid) {
+
+	$SIG{"CHLD"} = sub { wait; exit WEXITSTATUS $?; };
+	select STDERR;
+	open my $fd, "<", $file or die "Cannot open file";
+	my ($lastChange, $i);
+	sub fileChanged() {
+		return $lastChange != (stat $fd)[9];
+	}
+	sub seekBegin() {
+		$lastChange=(stat $fd)[9];
+		seek $fd, 0, SEEK_SET;
+		$i=-1;
+	}
+	sub pipeEmpty() {
+		my $rin = my $win = my $ein = '';
+		vec($rin, fileno($pipeOut), 1) = 1;
+		return not select $rin, $win, $ein, 0;
+	}
+	my $sleepTime=1;
+	sub sleepExpTo {
+		sleep $sleepTime;
+		$sleepTime*=2;
+		$sleepTime=$_[0] if $sleepTime > $_[0];
+	}
+
+	my @lines=();
+	while (1) {
+		seekBegin;
+		while (++$i, $_=<$fd>) {
+			if ($i<@lines) {
+				next if $_ eq $lines[$i];
+				last;
+			}
+			$sleepTime=0.01; sleepExpTo 1 while not pipeEmpty and not fileChanged;
+			last if fileChanged;
+			push @lines, $_;
+			printf "%4d> %s", $i+1, $_;
+			print $pipeIn $_;
+			print $pipeIn $_ if $i==0;
+		}
+		say "Error: Change in the first ". @lines ." lines of the file, waiting..." if $i<@lines;
+		$sleepTime=0.1; sleepExpTo 1 while not fileChanged;
+	}
+
+} else {
+
+	my ($cmd, $cmdArgs) = <$pipeOut> =~ /^#!(\S*)\s+(.*?)\s*$/ or die "Wrong hashbang";
+	if ($cmdArgs) {
+		exec $cmd, $cmdArgs, '/dev/fd/'.fileno($pipeOut), @args;
+	} else {
+		exec $cmd, '/dev/fd/'.fileno($pipeOut), @args;
+	}
+
+}

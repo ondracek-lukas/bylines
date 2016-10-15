@@ -1,0 +1,28 @@
+Modify your scripts while they are being executed.
+
+Copyright (C) 2016  Lukáš Ondráček <ondracek.lukas@gmail.com>,
+to be used under GNU GPLv3, see COPYING file.
+
+
+Usage: bylines SCRIPT_FILE [PARAMETERS ...]
+
+
+SCRIPT_FILE will be executed using its interpreter according to the hashbang line.
+The interpreter will get the file BY LINES through a pipe;
+you can modify part of the file which has not been read yet;
+at the end of the file the interpreter will not receive EOF,
+instead it will wait for new lines to be appended to the file;
+you have to terminate the interpreter explicitly using its appropriate command (exit, quit, ...).
+
+If the interpreter reads only those lines it currently needs (like bash does),
+then usually one line after the being executed line stays in the pipe
+while the others can be modified.
+
+The interpreter is spawned using this script (as its only child), 
+so if you need to signal it, send the signal directly to the interpreter.
+If this script is terminated using a signal, interpreter receives EOF.
+
+Warning:
+This script uses active/exponential waiting,
+so you can notice slower execution or higher cpu consumption
+in comparison to direct execution of the script.
